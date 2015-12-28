@@ -1,0 +1,45 @@
+{
+	"nodes": {
+		"v3": {
+			"loads": ["l3"],
+			"generators": ["g1","i3"],
+			"children": ["v5"]
+		},
+		"v5": {
+			"loads": ["l5"],
+			"generators": ["g2"],
+			"children": ["v8", "v9"]
+		},
+		"v8": {
+			"loads": ["l8"],
+			"generators": ["g4","i0","i2"],
+			"children": []
+		},
+		"v9": {
+			"loads": ["l9"],
+			"generators": ["g5", "i1"],
+			"children": []
+		}
+	},
+	"generators": {
+		"g1": { "max_out": 30, "CI": 0.3 },
+		"g2": { "max_out": 20, "CI": 0.7 },
+		"g4": { "max_out": 40, "CI": 0.25 },
+		"g5": { "max_out": 30, "CI": 0.1 },
+		"i0": {"average_out": 10, "sigma": 0.2, "prob": 0.7},
+		"i1": {"average_out": 15, "sigma": 0.1, "prob": 0.8},
+		"i2": {"average_out": 15, "sigma": 0.2, "prob": 0.5},
+		"i3": {"average_out": 13, "sigma": 0.2, "prob": 0.6}
+	},
+	"loads": {
+		"l3": -10,
+		"l5": -10,
+		"l8": -40,
+		"l9": -10
+	},
+	"connections": {
+		"v3-v5": 100,
+		"v5-v8": 20,
+		"v5-v9": 40
+	}
+}

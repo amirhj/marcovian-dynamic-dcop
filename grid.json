@@ -1,0 +1,99 @@
+{
+	"options": {
+		"gamma": 0.8,
+		"alpha": 0.2,
+		"DCOPIterations": 1000,
+		"RLDCOPIterations": 2000,
+		"RLIterations": 2000
+	},
+	"nodes": {
+		"v0": {
+			"loads": ["l0"],
+			"generators": ["i3"],
+			"children": ["v1"]
+		},
+		"v1": {
+			"loads": ["l1"],
+			"generators": [],
+			"children": ["v2", "v3"]
+		},
+		"v2": {
+			"loads": ["l2"],
+			"generators": ["g0"],
+			"children": ["v4"]
+		},
+		"v3": {
+			"loads": ["l3"],
+			"generators": ["g1", "i2"],
+			"children": ["v5"]
+		},
+		"v4": {
+			"loads": ["l4"],
+			"generators": [],
+			"children": ["v6"]
+		},
+		"v5": {
+			"loads": ["l5"],
+			"generators": ["g2", "i5"],
+			"children": ["v8", "v9"]
+		},
+		"v6": {
+			"loads": ["l6"],
+			"generators": ["i1"],
+			"children": ["v7"]
+		},
+		"v7": {
+			"loads": ["l7"],
+			"generators": ["g3", "i4"],
+			"children": []
+		},
+		"v8": {
+			"loads": ["l8"],
+			"generators": ["g4", "i0"],
+			"children": []
+		},
+		"v9": {
+			"loads": ["l9"],
+			"generators": ["g5"],
+			"children": []
+		}
+	},
+	"generators": {
+		"g0": { "max_out": 20, "CI": 0.5 },
+		"g1": { "max_out": 30, "CI": 0.3 },
+		"g2": { "max_out": 20, "CI": 0.7 },
+		"g3": { "max_out": 50, "CI": 0.6 },
+		"g4": { "max_out": 40, "CI": 0.25 },
+		"g5": { "max_out": 30, "CI": 0.1 },
+		"i0": {"average_out": 3, "sigma": 0.2, "prob": 0.7},
+		"i1": {"average_out": 10, "sigma": 0.1, "prob": 0.8},
+		"i2": {"average_out": 15, "sigma": 0.2, "prob": 0.5},
+		"i3": {"average_out": 13, "sigma": 0.2, "prob": 0.6},
+		"i4": {"average_out": 2, "sigma": 0.2, "prob": 0.55},
+		"i2": {"average_out": 15, "sigma": 0.2, "prob": 0.5},
+		"i5": {"average_out": 14, "sigma": 0.2, "prob": 0.6}
+	},
+	"loads": {
+		"l0": -30,
+		"l1": -40,
+		"l2": -10,
+		"l3": -10,
+		"l4": -20,
+		"l5": -10,
+		"l6": -30,
+		"l7": -20,
+		"l8": -40,
+		"l9": -10
+	},
+	"connections": {
+		"v0-v1": 60,
+		"v1-v2": 40,
+		"v1-v3": 50,
+		"v2-v4": 60,
+		"v4-v6": 70,
+		"v6-v7": 60,
+		"v3-v5": 100,
+		"v5-v8": 20,
+		"v5-v9": 40
+	}
+}
