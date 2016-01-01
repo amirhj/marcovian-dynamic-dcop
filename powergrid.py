@@ -3,11 +3,12 @@ import random, sys
 from util import Counter
 
 class Node:
-    def __init__(self, id, loads, generators, powergrid,rlParams, parent=None, debugLevel=1):
+    def __init__(self, id, loads, generators, powergrid, rlParams, iResources, parent=None, debugLevel=1):
         self.id = id
         self.powerGrid = powergrid
         self.loads = { l:self.powerGrid.loads[l] for l in loads }
         self.generators = { g:self.powerGrid.generators[g] for g in generators }
+        self.iResources = { i:self.powerGrid.iResources[i] for i in iResources }
         self.parent = parent
         self.messageBox = []
         self.OPCStates = {}
@@ -19,12 +20,16 @@ class Node:
         self.debugLevel = debugLevel
 
         # RL parameters
-        self.rl = rlparams
+        self.rl = rlParams
         self.qvalues = Counter()
         self.actions = set()
         self.states = set()
         self.finalResult = None
         self.prevFinalResult = None
+        self.learningResult = None
+        self.prevLearningResult = None
+        self.learningMessageBox = []
+        self.learningStateLog = []
 
     def isRoot(self):
         if self.parent == None:
@@ -42,8 +47,14 @@ class Node:
 
     def readMessageBox(self):
         messages = { m.sender: m for m in self.messageBox }
-        self.stateLog.append({'recived': [{'from':m, 'content':str(messages[m].content) } for m in messages ] })
+        self.stateLog.append({'recived Inbox': [{'from':m, 'content':str(messages[m].content) } for m in messages ] })
         del self.messageBox[:]
+        return messages
+
+    def readLearningMessageBox(self):
+        messages = { m.sender: m for m in self.learningMessageBox }
+        self.stateLog.append({'recived Learning Inbox': [{'from':m, 'content':str(messages[m].content) } for m in messages ] })
+        del self.learningMessageBox[:]
         return messages
 
     def calculateValues(self):
@@ -186,6 +197,14 @@ class Node:
             if self.debugLevel >= 2:
                 print "Node ",self.id," to parent ",self.parent,self.values," ",len(self.values)
             self.powerGrid.grid[self.parent].messageBox.append(m)
+
+    def sendLearningMessageToParent(self, value):
+        if not self.isRoot():
+            m = Message(self.id, self.parent, value)
+            self.learningStateLog[-1]['sent'] = [{ 'to':self.parent, 'content':value }]
+            if self.debugLevel >= 2:
+                print "Node ",self.id," to parent ",self.parent,value," Learning Inbox"
+            self.powerGrid.grid[self.parent].learningMessageBox.append(m)
 
     def propagateValues(self):
         messages = self.readMessageBox()
@@ -339,7 +358,7 @@ class Node:
                 if self.isRoot():
                     self.propagateValues()
                     self.state = 1
-                    self.rlUpdate()
+                    self.update()
                 else:
                     self.calculateValues()
                     self.state = 2
@@ -347,11 +366,12 @@ class Node:
                 self.propagateValues()
                 self.state = 1
                 self.isFinished = True
-                self.rlUpdate()
+                self.update()
 
     def reset(self):
         self.isFinished = False
         del self.stateLog[:]
+        del self.learningStateLog[:]
 
     def saveGeneratorsStates(self, state):
         for g in state:
@@ -362,25 +382,58 @@ class Node:
             return self.powerGrid.connections[(self.id, self.parent)]
         return sys.maxint
 
-    def rlUpdate(self):
+    def update(self):
         rlState = self.powerGrid.getRLState()
-        if rlState == 0:
-            if self.prevFinalResult != None:
-                qstate = self.getQStateOfResult(self.prevFinalResult)
-                reward = self.getReward()
-                nextQState = self.getQStateOfResult(self.finalResult)
+        print rlState
+        if rlState['IsLearning']:
+            if rlState['LearningInput'] == 'DCOP':
+                # RL is learning form DCOP by mimicing
+                if rlState['Actuator'] == 'DCOP':
+                    if self.prevFinalResult != None:
+                        qstate = self.getQStateOfResult(self.prevFinalResult)
+                        reward = self.getReward(rlState)
+                        nextQState = self.getQStateOfResult(self.finalResult)
 
-                self.qvalues[qstate] = (1-self.rl['alpha'])*self.qvalues[qstate] + self.rl['alpha']*(reward + self.rl['gamma']*self.qvalues[nextQState])
-        elif rlState == 1:
-            
+                        self.qvalues[qstate] = (1-self.rl['alpha'])*self.qvalues[qstate] + self.rl['alpha']*(reward + self.rl['gamma']*self.qvalues[nextQState])
+                # RL is acting and is learning rewards from DCOP by comparison
+                else:
+                    messages = self.readLearningMessageBox()
+                    sum_resources = sum([ self.iResources[i].getValue() for i in self.iResources ])
+                    sum_children = sum([ messages[m].content for m in messages ])
+                    state = sum_resources + sum_children
+                    action = self.policy(state)
+                    qstate = (state, self.encodeAction(action))
+
+                    nextState = state + action.values()
+                    nextAction = self.policy(state)
+                    nextQState = (nextState, self.encodeAction(nextAction))
+
+                    # nextState is the flow to parent
+                    reward = self.getReward(rlState, nextState)
+
+                    self.qvalues[qstate] = (1-self.rl['alpha'])*self.qvalues[qstate] + self.rl['alpha']*(reward + self.rl['gamma']*self.qvalues[nextQState])
+
+                    self.sendLearningMessageToParent(nextState)
+                    self.learningResult = (state, action, nextState)
+        # Learning is turned off
         else:
-            pass
+            messages = self.readLearningMessageBox()
+            sum_resources = sum([ self.iResources[i].getValue() for i in self.iResources ])
+            sum_children = sum([ messages[m].content for m in messages ])
+            state = sum_resources + sum_children
+            action = self.policy(state)
+
+            nextState = state + action.values()
+
+            self.sendLearningMessageToParent(nextState)
+            self.learningResult = (state, action, nextState)
 
     def policy(self, state):
         maxQ = 0
         isFirst = True
         maxActions = []
         for a in list(self.actions):
+            a = self.decodeAction(a)
             if isFirst or self.qvalues[(state, a)] > maxQ:
                 maxQ = self.qvalues[(state, a)]
                 del maxActions[:]
@@ -390,26 +443,42 @@ class Node:
                 maxActions.append(a)
         return random.choice(maxActions)
 
-    def getReward(self):
-        reward = 0
-        rlState = self.powerGrid.getRLState()
-        if rlState == 0:
-            reward = 1
-        elif rlState == 1:
-            reward = 0
-        else:
-            reward = 0
-        return reward
+    def getReward(self, rlState, flow=None):
+        if rlState['id'] == 0:
+            return 1
+        elif rlState['id'] == 1:
+            if self.isLeaf():
+                return 0
+            # root or internal node
+            else:
+                return abs(flow) * -1.0
+        return 0
 
     def getQStateOfResult(self, result):
-        state = result[0]
         action = {}
         for g in result[2]:
             if not 'average_out' in self.powerGrid.generatorsJSON[g]:
                 action[g] = result[2][g]
-        self.actions.add(action)
-        qstate = (state, action)
+        self.actions.add(self.encodeAction(action))
+        
+        state = result[0] - sum(action.values())
+        qstate = (state, self.encodeAction(action))
         return qstate
+
+    def encodeAction(self, action):
+        a = []
+        for g in action:
+            a.append(g)
+            a.append(action[g])
+        return tuple(a)
+
+    def decodeAction(self, action):
+        a = {}
+        i = 0
+        while i < len(action):
+            a[action[i]] = action[i+1]
+            i += 2
+        return a
 
 class Generator:
     def __init__(self, id, max_out, CI):
@@ -418,12 +487,13 @@ class Generator:
         self.CI = CI
         self.values = range(self.max_out + 1)
         self.value = None
+        self.learningValue = None
 
     def domain(self):
         return self.values
 
 class IntermittentResource:
-    def __init__(self, id, average_out, sigma, prob):
+    def __init__(self, id, average_out, sigma, prob, distribution):
         self.id = id
         self.average_out = average_out
         self.max_out = average_out
@@ -431,13 +501,24 @@ class IntermittentResource:
         self.prob = prob
         self.CI = 0
         self.value = None
+        self.learningValue = None
+        self.distribution = distribution
+        self.distributionIterator = 0
+        self.maxIteration = len(distribution)
 
     def domain(self):
         # return [0, ran.normal(self.average_out, self.sigma)]
-        r = random.random()
+        #r = random.random()
+        r = self.distribution[self.distributionIterator]
+        self.distributionIterator += 1
+        if self.distributionIterator == self.maxIteration:
+            self.distributionIterator = 0
         if r < self.prob:
 	       return [self.average_out]
         return [0]
+
+    def getValue():
+        return self.domain()[0]
 
 class PowerGrid:
     def __init__(self, gridJSON, debugLevel=1):
@@ -445,16 +526,25 @@ class PowerGrid:
         self.connections = {}
         self.loads = {}
         self.generators = {}
+        self.iResources = {}
         self.leaves = []
         self.levels = {}
         self.nodesJSON = gridJSON['nodes']
         self.loadsJSON = gridJSON['loads']
         self.generatorsJSON = gridJSON['generators']
         self.connectionsJSON = gridJSON['connections']
+        self.distributions = gridJSON['distributions']
         self.debugLevel = debugLevel
         self.iteration = 0
         self.rl = gridJSON['options']
-        self.rlState = 0
+        self.learningStatesOrder = gridJSON['options']['order']
+        # LearningInput, Actuator, IsLearning, Reward
+        self.learningStates = [\
+            {'id':0, 'LearningInput':'DCOP', 'Actuator':'DCOP', 'IsLearning':True, 'Reward':1},\
+            {'id':1, 'LearningInput':'RL', 'Actuator':'RL', 'IsLearning':True, 'Reward':'|RL-DCOP|'},\
+            {'id':2, 'LearningInput':'DCOP', 'Actuator':'RL', 'IsLearning':True, 'Reward':'|RL-DCOP|'},\
+            {'id':3, 'LearningInput':'RL', 'Actuator':'RL', 'IsLearning':False, 'Reward':0}\
+        ]
         self.initialize()
 
     def initialize(self):
@@ -464,7 +554,8 @@ class PowerGrid:
         # Generators
         for g in self.generatorsJSON:
             if 'average_out' in self.generatorsJSON[g]:
-                self.generators[g] = IntermittentResource(g, self.generatorsJSON[g]['average_out'], self.generatorsJSON[g]['sigma'], self.generatorsJSON[g]['prob'])
+                self.generators[g] = IntermittentResource(g, self.generatorsJSON[g]['average_out'], self.generatorsJSON[g]['sigma'], self.generatorsJSON[g]['prob'], self.distributions[self.generatorsJSON[g]['distribution']])
+                self.iResources[g] = self.generators[g]
             else:
                 self.generators[g] = Generator(g, self.generatorsJSON[g]['max_out'], self.generatorsJSON[g]['CI'])
 
@@ -500,7 +591,12 @@ class PowerGrid:
             else:
                 parent = None
 
-            self.grid[n] = Node(n, self.nodesJSON[n]['loads'], self.nodesJSON[n]['generators'], self, parent, self.debugLevel)
+            iResources = []
+            for g in self.nodesJSON[n]['generators']:
+                if g in self.iResources:
+                    iResources.append(g)
+
+            self.grid[n] = Node(n, self.nodesJSON[n]['loads'], self.nodesJSON[n]['generators'], self, self.rl, iResources, parent, self.debugLevel)
 
         # connections thermal capacities
         for c in self.connectionsJSON:
@@ -510,14 +606,17 @@ class PowerGrid:
 
         self.setLevels()
 
+        self.sumIterations = []
+        sumIterations = 0
+        for s in self.learningStatesOrder:
+            sumIterations += s['numberOfIterations']
+            self.sumIterations.append(sumIterations)
+
     def getRLState(self):
-        if self.iteration <= self.rl['DCOPIterations']:
-            self.rlState = 0
-        elif self.iteration <= self.rl['DCOPIterations'] + self.rl['RLDCOPIterations']:
-            self.rlState = 1
-        else:
-            self.rlState = 2
-        return self.rlState
+        for s in range(len(self.sumIterations)):
+            if self.iteration <= self.sumIterations[s]:
+                return self.learningStates[self.learningStatesOrder[s]['state']]
+        return self.learningStates[3]
 
     def getChildren(self, nodeId):
         children = []
